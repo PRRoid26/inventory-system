@@ -1,0 +1,16 @@
+asset_no,serial_no,product_name,status,location,supplier,cost
+COMP-001,SN12345678,Dell OptiPlex 7090,Available,IT Department,Dell Inc.,1200.00
+COMP-002,SN12345679,HP EliteBook 850 G8,Available,Engineering,HP Inc.,1500.00
+COMP-003,SN12345680,Lenovo ThinkPad X1 Carbon,In Service,Sales,Lenovo,1800.00
+NET-001,SN98765432,Cisco Catalyst 2960-X,Available,Server Room,Cisco Systems,800.00
+NET-002,SN98765433,Ubiquiti UniFi Dream Machine Pro,Available,Server Room,Ubiquiti,379.00
+MON-001,SN11223344,Dell UltraSharp 27" U2720Q,Available,IT Department,Dell Inc.,450.00
+MON-002,SN11223345,LG 27UK850-W 27" 4K,Available,Design Team,LG Electronics,400.00
+PRINT-001,SN55667788,HP LaserJet Pro M404dn,Available,Office Floor 3,HP Inc.,350.00
+PRINT-002,SN55667789,Brother MFC-L3770CDW,Available,Office Floor 2,Brother,480.00
+SERVER-001,SN99887766,Dell PowerEdge R740,In Service,Data Center,Dell Inc.,8500.00
+MOBILE-001,SN44556677,iPhone 13 Pro,In Service,Executive,Apple Inc.,999.00
+MOBILE-002,SN44556678,Samsung Galaxy S21,Available,HR Department,Samsung,799.00
+TABLET-001,SN33445566,iPad Pro 12.9",Available,Design Team,Apple Inc.,1099.00
+UPS-001,SN22334455,APC Smart-UPS 1500VA,Available,Server Room,APC,549.00
+ROUTER-001,SN66778899,TP-Link Archer AX6000,Available,Branch Office,TP-Link,299.00

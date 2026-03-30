@@ -1,0 +1,5 @@
+sudo -u postgres psql
+
+
+export DATABASE_URL="postgresql://admin:admin123@localhost:5432/fugro"
+./start_backend.sh
