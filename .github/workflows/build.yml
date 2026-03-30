@@ -17,9 +17,10 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
+        working-directory: frontend
         run: |
           pip install pyinstaller
-          pip install -r frontend/requirements.txt
+          pip install -r requirements.txt
 
       - name: Build .exe
         working-directory: frontend
@@ -32,7 +33,7 @@ jobs:
           path: frontend/dist/FugroInventory.exe
 
   build-linux:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
 
@@ -47,12 +48,13 @@ jobs:
           sudo apt-get install -y \
             libxcb-xinerama0 libxcb-cursor0 \
             libgl1-mesa-glx libegl1 \
-            imagemagick wget fuse
+            imagemagick wget libfuse2
 
       - name: Install Python dependencies
+        working-directory: frontend
         run: |
           pip install pyinstaller
-          pip install -r frontend/requirements.txt
+          pip install -r requirements.txt
 
       - name: Build binary
         working-directory: frontend
