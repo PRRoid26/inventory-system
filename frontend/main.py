@@ -27,12 +27,98 @@ from PyQt6.QtGui import QIcon, QFont, QColor, QPalette, QKeyEvent
 
 # Matplotlib for pie chart
 import matplotlib
-matplotlib.use('Qt5Agg')
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+matplotlib.use('QtAgg')
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 
 # Configuration
 API_BASE_URL = "https://inventory-system-iaub.onrender.com"  # Change for cloud deployment
+REQUEST_TIMEOUT = 30  # seconds — prevents UI from freezing on slow/sleeping Render instance
+
+
+class DataFetcher(QThread):
+    """
+    Runs all read-only API calls in a background thread.
+    Emits data_ready with a dict of all results when done.
+    Emits error_occurred with a message string on failure.
+    """
+    data_ready = pyqtSignal(dict)
+    error_occurred = pyqtSignal(str)
+
+    def __init__(self, api_client):
+        super().__init__()
+        self.api_client = api_client
+
+    def run(self):
+        try:
+            imports = self.api_client.get_imports()
+            equipment = self.api_client.get_equipment()
+            worklogs = self.api_client.get_worklogs()
+            overview = self.api_client.get_overview_stats()
+            self.data_ready.emit({
+                "imports": imports,
+                "equipment": equipment,
+                "worklogs": worklogs,
+                "overview": overview,
+            })
+        except Exception as e:
+            self.error_occurred.emit(str(e))
+
+
+class WriteWorker(QThread):
+    """
+    Runs a single write API call in a background thread.
+    Pass a callable (lambda or partial) that returns a result.
+    """
+    finished = pyqtSignal(object)   # emits the return value of fn
+    error_occurred = pyqtSignal(str)
+
+    def __init__(self, fn):
+        super().__init__()
+        self.fn = fn
+
+    def run(self):
+        try:
+            result = self.fn()
+            self.finished.emit(result)
+        except Exception as e:
+            self.error_occurred.emit(str(e))
+
+
+class LoadingOverlay(QWidget):
+    """Semi-transparent overlay shown over the tab area while data loads."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
+        self.setStyleSheet("background-color: rgba(30, 30, 30, 180); border-radius: 8px;")
+
+        layout = QVBoxLayout()
+        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self._label = QLabel("⏳  Loading data, please wait…")
+        self._label.setStyleSheet(
+            "color: white; font-size: 18px; font-weight: bold; background: transparent;"
+        )
+        self._label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self._label)
+
+        self._sub = QLabel("Connecting to server…")
+        self._sub.setStyleSheet("color: #aaaaaa; font-size: 12px; background: transparent;")
+        self._sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self._sub)
+
+        self.setLayout(layout)
+        self.hide()
+
+    def set_message(self, main: str, sub: str = ""):
+        self._label.setText(main)
+        self._sub.setText(sub)
+
+    def resizeEvent(self, event):
+        if self.parent():
+            self.setGeometry(self.parent().rect())
+        super().resizeEvent(event)
 
 
 class APIClient:
@@ -52,7 +138,7 @@ class APIClient:
             response = requests.post(
                 f"{self.base_url}/api/auth/login",
                 json={"username": username, "password": password}
-            )
+            , timeout=REQUEST_TIMEOUT)
             if response.status_code == 200:
                 data = response.json()
                 self.set_token(data['access_token'])
@@ -72,7 +158,7 @@ class APIClient:
                     "password": password,
                     "full_name": full_name
                 }
-            )
+            , timeout=REQUEST_TIMEOUT)
             if response.status_code == 200:
                 data = response.json()
                 self.set_token(data['access_token'])
@@ -103,6 +189,8 @@ class APIClient:
                     f"{self.base_url}/api/equipment",
                     headers=self.headers,
                     params=params
+                ,
+                    timeout=REQUEST_TIMEOUT
                 )
                 if response.status_code != 200:
                     break
@@ -125,6 +213,8 @@ class APIClient:
                 f"{self.base_url}/api/imports",
                 headers=self.headers,
                 params={"limit": 200}
+            ,
+                timeout=REQUEST_TIMEOUT
             )
             if response.status_code == 200:
                 return response.json()
@@ -138,6 +228,8 @@ class APIClient:
             response = requests.get(
                 f"{self.base_url}/api/equipment/search/{prefix}",
                 headers=self.headers
+            ,
+                timeout=REQUEST_TIMEOUT
             )
             if response.status_code == 200:
                 return response.json()
@@ -152,7 +244,7 @@ class APIClient:
                 f"{self.base_url}/api/equipment",
                 headers=self.headers,
                 json=data
-            )
+            , timeout=REQUEST_TIMEOUT)
             return response.status_code == 200
         except Exception as e:
             print(f"Create equipment error: {e}")
@@ -164,6 +256,8 @@ class APIClient:
                 f"{self.base_url}/api/equipment/{equipment_id}",
                 headers=self.headers,
                 json=data
+            ,
+                timeout=REQUEST_TIMEOUT
             )
             return response.status_code == 200
         except Exception as e:
@@ -175,6 +269,8 @@ class APIClient:
             response = requests.delete(
                 f"{self.base_url}/api/equipment/{equipment_id}",
                 headers=self.headers
+            ,
+                timeout=REQUEST_TIMEOUT
             )
             return response.status_code == 200
         except Exception as e:
@@ -186,6 +282,8 @@ class APIClient:
             response = requests.get(
                 f"{self.base_url}/api/specifications/{equipment_id}",
                 headers=self.headers
+            ,
+                timeout=REQUEST_TIMEOUT
             )
             if response.status_code == 200:
                 return response.json()
@@ -200,7 +298,7 @@ class APIClient:
                 f"{self.base_url}/api/specifications",
                 headers=self.headers,
                 json=data
-            )
+            , timeout=REQUEST_TIMEOUT)
             return response.status_code == 200
         except Exception as e:
             print(f"Create specification error: {e}")
@@ -212,6 +310,8 @@ class APIClient:
                 f"{self.base_url}/api/specifications/{spec_id}",
                 headers=self.headers,
                 json=data
+            ,
+                timeout=REQUEST_TIMEOUT
             )
             return response.status_code == 200
         except Exception as e:
@@ -230,6 +330,8 @@ class APIClient:
                 f"{self.base_url}/api/worklogs",
                 headers=self.headers,
                 params=params
+            ,
+                timeout=REQUEST_TIMEOUT
             )
             if response.status_code == 200:
                 return response.json()
@@ -245,7 +347,7 @@ class APIClient:
                 f"{self.base_url}/api/worklogs",
                 headers=self.headers,
                 json=data
-            )
+            , timeout=REQUEST_TIMEOUT)
             if response.status_code != 200:
                 print(f"[DEBUG] Worklog creation failed: {response.status_code} - {response.text}")
             return response.status_code == 200
@@ -260,6 +362,8 @@ class APIClient:
                 f"{self.base_url}/api/worklogs/{worklog_id}",
                 headers=self.headers,
                 json=data
+            ,
+                timeout=REQUEST_TIMEOUT
             )
             if response.status_code != 200:
                 print(f"[DEBUG] Worklog update failed: {response.status_code} - {response.text}")
@@ -286,7 +390,7 @@ class APIClient:
                     f"{self.base_url}/api/import/csv",
                     headers=self.headers,
                     files=files
-                )
+                , timeout=REQUEST_TIMEOUT)
                 if response.status_code == 200:
                     return response.json()
                 try:
@@ -303,6 +407,8 @@ class APIClient:
             response = requests.get(
                 f"{self.base_url}/api/imports",
                 headers=self.headers
+            ,
+                timeout=REQUEST_TIMEOUT
             )
             if response.status_code == 200:
                 return response.json()
@@ -316,6 +422,8 @@ class APIClient:
             response = requests.get(
                 f"{self.base_url}/api/imports/{import_id}",
                 headers=self.headers
+            ,
+                timeout=REQUEST_TIMEOUT
             )
             if response.status_code == 200:
                 return response.json()
@@ -330,6 +438,8 @@ class APIClient:
                 f"{self.base_url}/api/imports/{import_id}",
                 headers=self.headers,
                 params={"delete_equipment": delete_equipment}
+            ,
+                timeout=REQUEST_TIMEOUT
             )
             return response.status_code == 200
         except Exception as e:
@@ -341,6 +451,8 @@ class APIClient:
             response = requests.get(
                 f"{self.base_url}/api/stats/overview",
                 headers=self.headers
+            ,
+                timeout=REQUEST_TIMEOUT
             )
             if response.status_code == 200:
                 return response.json()
@@ -354,6 +466,8 @@ class APIClient:
             response = requests.get(
                 f"{self.base_url}/api/stats/category",
                 headers=self.headers
+            ,
+                timeout=REQUEST_TIMEOUT
             )
             if response.status_code == 200:
                 return response.json()
@@ -367,6 +481,8 @@ class APIClient:
             response = requests.get(
                 f"{self.base_url}/api/stats/category/{category}",
                 headers=self.headers
+            ,
+                timeout=REQUEST_TIMEOUT
             )
             if response.status_code == 200:
                 return response.json()
@@ -906,12 +1022,26 @@ class MainWindow(QMainWindow):
         self.api_client = api_client
         self.current_equipment = []
         self.current_import_list = []
-        self.current_category_filter = None  # Track current category for overview
-        self.all_worklogs = []  # Cache worklogs for inventory tab
-        
+        self.current_category_filter = None
+        self.all_worklogs = []
+        self._is_busy = False          # blocks double-clicks during operations
+        self._pending_notes = {}       # {equipment_id: (location, supplier)}
+        self._pending_wl_notes = {}    # {worklog_id: notes}
+
+        # Debounce timers — save notes 1s after user stops typing
+        self._notes_timer = QTimer(self)
+        self._notes_timer.setSingleShot(True)
+        self._notes_timer.setInterval(1000)
+        self._notes_timer.timeout.connect(self._flush_notes)
+
+        self._wl_notes_timer = QTimer(self)
+        self._wl_notes_timer.setSingleShot(True)
+        self._wl_notes_timer.setInterval(1000)
+        self._wl_notes_timer.timeout.connect(self._flush_notes)
+
         self.setWindowTitle("IT Asset Inventory Management System")
         self.setGeometry(100, 100, 1400, 800)
-        
+
         self.setup_ui()
         self.load_data()
     
@@ -936,6 +1066,10 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.create_imports_tab(), "📂 Import History")
         
         main_layout.addWidget(self.tabs)
+
+        # Loading overlay — sits on top of the tabs
+        self._overlay = LoadingOverlay(self.tabs)
+        self._overlay.setGeometry(self.tabs.rect())
         
         # Status bar
         self.statusBar().showMessage("Ready")
@@ -1395,32 +1529,54 @@ class MainWindow(QMainWindow):
         """Auto-save notes when edited in active worklog table"""
         if not item:
             return
-        
-        # Only process edits to the Notes column (column 10)
         if item.column() != 10:
             return
-        
-        # Check if we're actually in editing state
         if self.active_worklog_table.state() != QAbstractItemView.State.EditingState:
             return
-        
         row = item.row()
-        
-        # Get worklog ID from the first column
         id_item = self.active_worklog_table.item(row, 0)
         if not id_item:
             return
-        
         worklog_id = int(id_item.text())
-        new_notes = item.text()
-        
-        # Update via API
-        if self.api_client.update_worklog(worklog_id, {'notes': new_notes}):
-            self.statusBar().showMessage(f"Notes saved for worklog ID {worklog_id}", 3000)
-            # Refresh inventory table to show updated notes
-            self.load_equipment()
+        self._pending_wl_notes[worklog_id] = item.text()
+        self._wl_notes_timer.start()
+
+    def _flush_wl_notes(self):
+        """Actually send buffered worklog notes saves to the API."""
+        pending = dict(self._pending_wl_notes)
+        self._pending_wl_notes.clear()
+        for worklog_id, notes in pending.items():
+            worker = WriteWorker(
+                lambda wid=worklog_id, n=notes:
+                    self.api_client.update_worklog(wid, {'notes': n})
+            )
+            worker.finished.connect(lambda ok: self.statusBar().showMessage("Notes saved ✓", 2000) if ok else None)
+            worker.error_occurred.connect(lambda e: self.statusBar().showMessage(f"Save failed: {e}", 3000))
+            worker.start()
+            self._keep_worker(worker)
+
+    def _keep_worker(self, worker: WriteWorker):
+        """Keep a reference to worker so it isn't GC'd before finishing."""
+        if not hasattr(self, '_workers'):
+            self._workers = []
+        self._workers.append(worker)
+        worker.finished.connect(lambda _: self._workers.remove(worker) if worker in self._workers else None)
+        worker.error_occurred.connect(lambda _: self._workers.remove(worker) if worker in self._workers else None)
+
+    def _run_write(self, fn, on_success=None, on_error=None, status_msg="Saving…"):
+        """Generic helper: run fn() in a WriteWorker thread."""
+        self.statusBar().showMessage(f"⏳ {status_msg}")
+        worker = WriteWorker(fn)
+        if on_success:
+            worker.finished.connect(on_success)
+        if on_error:
+            worker.error_occurred.connect(on_error)
         else:
-            QMessageBox.warning(self, "Error", "Failed to save notes")
+            worker.error_occurred.connect(
+                lambda e: QMessageBox.warning(self, "Error", f"Operation failed:\n{e}")
+            )
+        worker.start()
+        self._keep_worker(worker)
     
     def create_past_worklog_tab(self):
         """Past Work Logs - historical log of all device activities"""
@@ -1704,36 +1860,33 @@ class MainWindow(QMainWindow):
         if current_row < 0:
             QMessageBox.warning(self, "Error", "Please select a work log")
             return
-        
         worklog_id = int(self.active_worklog_table.item(current_row, 0).text())
         asset_no = self.active_worklog_table.item(current_row, 1).text()
-        
-        # Find equipment
-        equipment = None
-        for eq in self.current_equipment:
-            if eq.get('asset_no') == asset_no:
-                equipment = eq
-                break
-        
+        equipment = next((e for e in self.current_equipment if e.get('asset_no') == asset_no), None)
         if not equipment:
             QMessageBox.warning(self, "Error", f"Equipment {asset_no} not found")
             return
-        
-        # Update equipment status to Available
-        if self.api_client.update_equipment(equipment['id'], {'status': 'Available'}):
-            # Update work log status to Completed with actual return date
-            from PyQt6.QtCore import QDate
-            worklog_data = {
-                'current_status': 'Completed',
-                'actual_return_date': QDate.currentDate().toString('yyyy-MM-dd') + 'T00:00:00'
-            }
-            if self.api_client.update_worklog(worklog_id, worklog_data):
-                QMessageBox.information(self, "Success", f"Device {asset_no} is now Available")
+
+        from PyQt6.QtCore import QDate
+        worklog_data = {
+            'current_status': 'Completed',
+            'actual_return_date': QDate.currentDate().toString('yyyy-MM-dd') + 'T00:00:00'
+        }
+        eq_id = equipment['id']
+
+        def do_it():
+            ok1 = self.api_client.update_equipment(eq_id, {'status': 'Available'})
+            ok2 = self.api_client.update_worklog(worklog_id, worklog_data)
+            return ok1 and ok2
+
+        self._run_write(
+            do_it,
+            on_success=lambda ok: (
+                QMessageBox.information(self, "Success", f"Device {asset_no} is now Available"),
                 self.load_data()
-            else:
-                QMessageBox.warning(self, "Error", "Failed to update work log")
-        else:
-            QMessageBox.warning(self, "Error", "Failed to update equipment status")
+            ) if ok else QMessageBox.warning(self, "Error", "Failed to update device status"),
+            status_msg=f"Making {asset_no} available…"
+        )
     
     def filter_past_worklogs(self):
         """Filter past work logs by asset number"""
@@ -1746,17 +1899,58 @@ class MainWindow(QMainWindow):
                 self.past_worklog_table.setRowHidden(row, search not in asset_no if search else False)
 
     def load_data(self):
-        """Load all data from server"""
-        self.load_import_history()
-        self.load_equipment()
+        """Load all data from server in a background thread to prevent UI freezing."""
+        if self._is_busy:
+            return
+        self._is_busy = True
+        self._overlay.set_message("⏳  Loading data…", "Connecting to server (may take ~30s if server is sleeping)")
+        self._overlay.show()
+        self._overlay.raise_()
+        self.statusBar().showMessage("⏳ Loading data from server...")
+        for btn in self.findChildren(QPushButton):
+            if "Refresh" in btn.text():
+                btn.setEnabled(False)
+
+        self._fetcher = DataFetcher(self.api_client)
+        self._fetcher.data_ready.connect(self._on_data_ready)
+        self._fetcher.error_occurred.connect(self._on_load_error)
+        self._fetcher.start()
+
+    def _on_data_ready(self, data: dict):
+        """Called in main thread when DataFetcher finishes."""
+        self.current_import_list = data.get("imports", [])
+        self.current_equipment = data.get("equipment", [])
+        self.all_worklogs = data.get("worklogs", [])
+
+        self.update_equipment_table(self.current_equipment)
         self.load_overview_stats()
         self.load_active_worklogs()
         self.load_past_worklogs()
         self.update_autocomplete()
+        self.load_import_history()
+
+        count = len(self.current_equipment)
+        self.statusBar().showMessage(f"✅ Loaded {count} record(s)")
+        self._overlay.hide()
+        self._is_busy = False
+        for btn in self.findChildren(QPushButton):
+            if "Refresh" in btn.text():
+                btn.setEnabled(True)
+
+    def _on_load_error(self, message: str):
+        """Called in main thread if DataFetcher hits an error."""
+        self.statusBar().showMessage(f"❌ Load failed: {message}")
+        self._overlay.hide()
+        self._is_busy = False
+        for btn in self.findChildren(QPushButton):
+            if "Refresh" in btn.text():
+                btn.setEnabled(True)
+        QMessageBox.warning(self, "Connection Error",
+                            f"Could not reach server:\n{message}\n\n"
+                            "Check your internet connection or wait for the server to wake up (free tier sleeps).")
     
     def load_equipment(self):
-        """Load equipment list"""
-        self.current_equipment = self.api_client.get_equipment()
+        """Refresh equipment table from cached data (use load_data for full network refresh)."""
         self.update_equipment_table(self.current_equipment)
         count = len(self.current_equipment)
         self.statusBar().showMessage(f"Showing all {count} record(s)")
@@ -1833,33 +2027,35 @@ class MainWindow(QMainWindow):
     def _save_notes_spec(self, item):
         if not item:
             return
-
-        # only user edits
         if not self.equipment_table.state() == QAbstractItemView.State.EditingState:
             return
-
         row = item.row()
         col = item.column()
-
         if col not in (6, 7):
             return
-
         id_item = self.equipment_table.item(row, 0)
         notes_item = self.equipment_table.item(row, 6)
         spec_item = self.equipment_table.item(row, 7)
-
         if not id_item or not notes_item or not spec_item:
             return
-
         equipment_id = int(id_item.text())
+        # Buffer the pending save — timer fires 1s after last keystroke
+        self._pending_notes[equipment_id] = (notes_item.text(), spec_item.text())
+        self._notes_timer.start()
 
-        self.api_client.update_equipment(
-            equipment_id,
-            {
-                "location": notes_item.text(),
-                "supplier": spec_item.text()
-            }
-        )
+    def _flush_notes(self):
+        """Actually send buffered notes saves to the API."""
+        pending = dict(self._pending_notes)
+        self._pending_notes.clear()
+        for equipment_id, (location, supplier) in pending.items():
+            worker = WriteWorker(
+                lambda eid=equipment_id, loc=location, sup=supplier:
+                    self.api_client.update_equipment(eid, {"location": loc, "supplier": sup})
+            )
+            worker.finished.connect(lambda ok: self.statusBar().showMessage("Notes saved ✓", 2000) if ok else None)
+            worker.error_occurred.connect(lambda e: self.statusBar().showMessage(f"Save failed: {e}", 3000))
+            worker.start()
+            self._keep_worker(worker)
     
     # REPLACE THIS METHOD IN YOUR MAIN FILE
 
@@ -2011,8 +2207,8 @@ class MainWindow(QMainWindow):
             self.category_table.setRowHeight(row, 45)
         
     def load_active_worklogs(self):
-        """Load active work logs (In Progress status only)"""
-        self.all_worklogs = self.api_client.get_worklogs()
+        """Load active work logs (In Progress status only) from cached data."""
+        # all_worklogs is populated by DataFetcher; no extra API call needed
         active_logs = [log for log in self.all_worklogs if log.get('current_status') == 'In Progress']
         
         # Block signals while loading to prevent auto-save triggers
@@ -2098,11 +2294,10 @@ class MainWindow(QMainWindow):
         self.active_worklog_table.blockSignals(False)
     
     def load_past_worklogs(self):
-        """Load past work logs (Completed status only)"""
+        """Load past work logs (Completed status only) from cached data."""
         from datetime import datetime
         
-        all_worklogs = self.api_client.get_worklogs()
-        past_logs = [log for log in all_worklogs if log.get('current_status') == 'Completed']
+        past_logs = [log for log in self.all_worklogs if log.get('current_status') == 'Completed']
         
         self.past_worklog_table.setRowCount(len(past_logs))
         
@@ -2136,8 +2331,7 @@ class MainWindow(QMainWindow):
             self.past_worklog_table.setItem(row, 10, QTableWidgetItem(log.get('notes', '') or ''))
 
     def load_import_history(self):
-        """Load CSV import history and refresh category filter dropdown."""
-        self.current_import_list = self.api_client.get_imports()
+        """Populate imports table from cached data (DataFetcher already fetched it)."""
         self.imports_table.setRowCount(len(self.current_import_list))
 
         for row, import_record in enumerate(self.current_import_list):
@@ -2280,86 +2474,90 @@ class MainWindow(QMainWindow):
         dialog = EquipmentDialog(self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             data = dialog.get_data()
-            if self.api_client.create_equipment(data):
-                QMessageBox.information(self, "Success", "Equipment added successfully")
-                self.load_equipment()
-                self.load_overview_stats()
-            else:
-                QMessageBox.critical(self, "Error", "Failed to add equipment")
-    
+            self._run_write(
+                lambda: self.api_client.create_equipment(data),
+                on_success=lambda ok: (
+                    QMessageBox.information(self, "Success", "Equipment added successfully"),
+                    self.load_data()
+                ) if ok else QMessageBox.critical(self, "Error", "Failed to add equipment"),
+                status_msg="Adding equipment…"
+            )
+
     def edit_equipment(self):
         """Edit selected equipment"""
         current_row = self.equipment_table.currentRow()
         if current_row < 0:
             QMessageBox.warning(self, "Warning", "Please select equipment to edit")
             return
-        
         equipment_id = int(self.equipment_table.item(current_row, 0).text())
         equipment = next((e for e in self.current_equipment if e['id'] == equipment_id), None)
-        
         if not equipment:
             return
-        
         dialog = EquipmentDialog(self, equipment)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             data = dialog.get_data()
-            if self.api_client.update_equipment(equipment_id, data):
-                QMessageBox.information(self, "Success", "Equipment updated successfully")
-                self.load_equipment()
-                self.load_overview_stats()
-            else:
-                QMessageBox.critical(self, "Error", "Failed to update equipment")
-    
+            self._run_write(
+                lambda: self.api_client.update_equipment(equipment_id, data),
+                on_success=lambda ok: (
+                    QMessageBox.information(self, "Success", "Equipment updated successfully"),
+                    self.load_data()
+                ) if ok else QMessageBox.critical(self, "Error", "Failed to update equipment"),
+                status_msg="Updating equipment…"
+            )
+
     def delete_equipment(self):
         """Delete selected equipment"""
         current_row = self.equipment_table.currentRow()
         if current_row < 0:
             QMessageBox.warning(self, "Warning", "Please select equipment to delete")
             return
-        
         equipment_id = int(self.equipment_table.item(current_row, 0).text())
         asset_no = self.equipment_table.item(current_row, 1).text()
-        
         reply = QMessageBox.question(
             self, 'Confirm Delete',
             f'Are you sure you want to delete equipment {asset_no}?',
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         )
-        
         if reply == QMessageBox.StandardButton.Yes:
-            if self.api_client.delete_equipment(equipment_id):
-                QMessageBox.information(self, "Success", "Equipment deleted successfully")
-                self.load_equipment()
-                self.load_overview_stats()
-            else:
-                QMessageBox.critical(self, "Error", "Failed to delete equipment")
-    
+            self._run_write(
+                lambda: self.api_client.delete_equipment(equipment_id),
+                on_success=lambda ok: (
+                    QMessageBox.information(self, "Success", "Equipment deleted successfully"),
+                    self.load_data()
+                ) if ok else QMessageBox.critical(self, "Error", "Failed to delete equipment"),
+                status_msg="Deleting equipment…"
+            )
+
     def import_csv(self):
         """Import CSV/Excel file"""
         file_path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Select CSV or Excel File",
-            "",
+            self, "Select CSV or Excel File", "",
             "Data Files (*.csv *.xlsx *.xls)"
         )
+        if not file_path:
+            return
+        self._overlay.set_message("📥  Importing file…", "Uploading and processing, please wait…")
+        self._overlay.show()
+        self._overlay.raise_()
+        self.statusBar().showMessage("⏳ Uploading file…")
 
-        if file_path:
-            result = self.api_client.upload_csv(file_path)
+        def do_upload():
+            return self.api_client.upload_csv(file_path)
+
+        def on_done(result):
+            self._overlay.hide()
             if result and "error" not in result:
-                msg = f"Import completed!\n\nTotal Records: {result['total_records']}\n"
-                msg += f"Successful: {result['successful']}\n"
-                msg += f"Failed: {result['failed']}"
-
+                msg = (f"Import completed!\n\nTotal Records: {result['total_records']}\n"
+                       f"Successful: {result['successful']}\nFailed: {result['failed']}")
                 if result.get('errors'):
-                    msg += f"\n\nFirst few errors:\n" + "\n".join(result['errors'])
-
+                    msg += "\n\nFirst few errors:\n" + "\n".join(result['errors'])
                 QMessageBox.information(self, "Import Complete", msg)
-                self.load_equipment()
-                self.load_overview_stats()
-                self.load_import_history()
+                self.load_data()
             else:
-                err_msg = result.get("error", "Unknown error") if result else "No response from server. Is the backend running?"
-                QMessageBox.critical(self, "Import Failed", f"Failed to import file:\n\n{err_msg}")
+                err = result.get("error", "Unknown error") if result else "No response from server"
+                QMessageBox.critical(self, "Import Failed", f"Failed to import file:\n\n{err}")
+
+        self._run_write(do_upload, on_success=on_done, status_msg="Uploading file…")
     
     def show_category_details(self, index):
         """Show detailed equipment list for selected Excel sheet"""
