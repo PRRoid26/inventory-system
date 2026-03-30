@@ -32,7 +32,7 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 
 # Configuration
-API_BASE_URL = "http://localhost:8000"  # Change for cloud deployment
+API_BASE_URL = "https://inventory-system-iaub.onrender.com"  # Change for cloud deployment
 
 
 class APIClient:
