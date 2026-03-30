@@ -7,7 +7,9 @@ export DATABASE_URL="postgresql://admin:admin123@localhost:5432/fugro"
 supabase
 project: fugro-inventory
 password: Fugro-inventory@123
-URL: postgresql://postgres:Fugro-inventory@123@db.ncsklhnqouhduaccqwjc.supabase.co:5432/postgres
+URL: postgresql://postgres.ncsklhnqouhduaccqwjc:Fugro-inventory%40123@aws-1-ap-northeast-2.pooler.supabase.com:5432/postgres
 
 render
 JWT_SECRET_KEY: d600e8cbb900af6471254c514bba14d522a0fe29104d5a1ca4c20c3ceb23447b
+Rendeer URL: https://inventory-system-iaub.onrender.com
+
