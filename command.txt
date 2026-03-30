@@ -3,3 +3,11 @@ sudo -u postgres psql
 
 export DATABASE_URL="postgresql://admin:admin123@localhost:5432/fugro"
 ./start_backend.sh
+
+supabase
+project: fugro-inventory
+password: Fugro-inventory@123
+URL: postgresql://postgres:Fugro-inventory@123@db.ncsklhnqouhduaccqwjc.supabase.co:5432/postgres
+
+render
+JWT_SECRET_KEY: d600e8cbb900af6471254c514bba14d522a0fe29104d5a1ca4c20c3ceb23447b
