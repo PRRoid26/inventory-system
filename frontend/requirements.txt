@@ -1,5 +1,9 @@
-PyQt6==6.6.1
-PyQt6-Qt6==6.6.1
+PyQt6==6.7.0
+PyQt6-Qt6==6.7.0
 PyQt6-sip==13.6.0
-requests==2.31.0
-matplotlib==3.8.2
+matplotlib==3.9.0
+requests==2.32.3
+charset-normalizer==3.3.2
+certifi==2024.6.2
+urllib3==2.2.2
+idna==3.7
