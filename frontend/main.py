@@ -32,7 +32,19 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 
 # Configuration
-API_BASE_URL = "https://inventory-system-iaub.onrender.com"  # Change for cloud deployment
+def _detect_api_url():
+    local_url  = "http://192.168.64.75:8000"
+    cloud_url  = "https://inventory-system-iaub.onrender.com"
+    try:
+        import requests as _r
+        _r.get(local_url + "/", timeout=3)
+        print("[API] Local NAS reachable — using local backend")
+        return local_url
+    except Exception:
+        print("[API] Local NAS unreachable — using cloud backend")
+        return cloud_url
+
+API_BASE_URL = _detect_api_url()
 REQUEST_TIMEOUT = 30  # seconds — prevents UI from freezing on slow/sleeping Render instance
 
 
