@@ -1,9 +1,3 @@
-sudo -u postgres psql
-
-
-export DATABASE_URL="postgresql://admin:admin123@localhost:5432/fugro"
-./start_backend.sh
-
 supabase
 project: fugro-inventory
 password: Fugro-inventory@123
@@ -13,3 +7,4 @@ render
 JWT_SECRET_KEY: d600e8cbb900af6471254c514bba14d522a0fe29104d5a1ca4c20c3ceb23447b
 Rendeer URL: https://inventory-system-iaub.onrender.com
 
+        
