@@ -39,12 +39,12 @@ def _detect_api_url():
         import requests as _r
         _r.get(local_url + "/", timeout=3)
         print("[API] Local NAS reachable — using local backend")
-        return local_url
+        return local_url, "local"
     except Exception:
         print("[API] Local NAS unreachable — using cloud backend")
-        return cloud_url
+        return cloud_url, "cloud"
 
-API_BASE_URL = _detect_api_url()
+API_BASE_URL, API_CONNECTION_TYPE = _detect_api_url()
 REQUEST_TIMEOUT = 30  # seconds — prevents UI from freezing on slow/sleeping Render instance
 
 
@@ -760,8 +760,9 @@ class LoginDialog(QDialog):
             return
         
         # Update API base URL
-        global API_BASE_URL
+        global API_BASE_URL, API_CONNECTION_TYPE
         API_BASE_URL = self.server_input.text()
+        API_CONNECTION_TYPE = "local" if "192.168" in API_BASE_URL else "cloud"
         self.api_client.base_url = API_BASE_URL
         
         if self.api_client.login(username, password):
@@ -1108,7 +1109,25 @@ class MainWindow(QMainWindow):
         layout.addWidget(title)
         
         layout.addStretch()
-        
+
+        # Server connection indicator
+        is_local = (API_CONNECTION_TYPE == "local")
+        indicator_dot = "🟢" if is_local else "🌐"
+        indicator_text = "Local NAS" if is_local else "Cloud Server"
+        indicator_color = "#4CAF50" if is_local else "#5B9BD5"
+
+        server_label = QLabel(f"{indicator_dot}  {indicator_text}")
+        server_label.setToolTip(f"Connected to: {self.api_client.base_url}")
+        server_label.setStyleSheet(f"""
+            color: {indicator_color};
+            font-size: 12px;
+            font-weight: bold;
+            padding: 4px 10px;
+            border: 1px solid {indicator_color};
+            border-radius: 10px;
+        """)
+        layout.addWidget(server_label)
+
         refresh_btn = QPushButton("🔄 Refresh")
         refresh_btn.clicked.connect(self.load_data)
         layout.addWidget(refresh_btn)
@@ -1404,6 +1423,11 @@ class MainWindow(QMainWindow):
         widget = QWidget()
         layout = QVBoxLayout()
 
+        # Info tip
+        tip_label = QLabel("💡 Notes column combines equipment notes and active worklog notes — click to edit and changes save automatically to both.")
+        tip_label.setStyleSheet("color: #666; font-style: italic; padding: 4px 8px;")
+        layout.addWidget(tip_label)
+
         filter_layout = QHBoxLayout()
 
         filter_layout.addWidget(QLabel("Asset No:"))
@@ -1464,15 +1488,19 @@ class MainWindow(QMainWindow):
         import_btn.clicked.connect(self.import_csv)
         action_layout.addWidget(import_btn)
 
+        export_btn = QPushButton("📤 Export to Excel")
+        export_btn.clicked.connect(self.export_to_excel)
+        action_layout.addWidget(export_btn)
+
         action_layout.addStretch()
         layout.addLayout(action_layout)
 
-        # Inventory table with worklog notes column
+        # Inventory table — Notes column combines equipment notes + worklog notes
         self.equipment_table = QTableWidget()
-        self.equipment_table.setColumnCount(9)
+        self.equipment_table.setColumnCount(8)
         self.equipment_table.setHorizontalHeaderLabels([
             'ID', 'Asset No', 'Serial No', 'Product Name', 'Category',
-            'Status', 'Notes', 'Specification', 'Worklog Notes'
+            'Status', 'Notes', 'Specification'
         ])
 
         self.equipment_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
@@ -1500,7 +1528,7 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout()
         
         # Info label
-        info_label = QLabel("💡 Tip: You can edit notes directly in the Notes column. Changes are saved automatically.")
+        info_label = QLabel("💡 Tip: You can edit notes directly in the Notes column. Changes are saved automatically to the equipment record and active worklog (if any).")
         info_label.setStyleSheet("color: #666; font-style: italic; padding: 5px;")
         layout.addWidget(info_label)
         
@@ -1523,7 +1551,7 @@ class MainWindow(QMainWindow):
         self.active_worklog_table = QTableWidget()
         self.active_worklog_table.setColumnCount(11)
         self.active_worklog_table.setHorizontalHeaderLabels([
-            'ID', 'Asset No', 'Product', 'Status', 'Assigned To', 
+            'ID', 'Asset No', 'Product', 'Status', 'Location', 
             'Department', 'Designation', 'Check Out', 'Expected Return', 'Reason', 'Notes'
         ])
         self.active_worklog_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
@@ -2007,25 +2035,41 @@ class MainWindow(QMainWindow):
             status_item.setFlags(status_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.equipment_table.setItem(row, 5, status_item)
 
-            # NOTES (mapped to backend LOCATION)
-            notes_item = QTableWidgetItem(equipment.get('location', '') or '')
+            # NOTES — equipment notes (location field) + worklog notes merged in one editable column
+            eq_notes = equipment.get('location', '') or ''
+
+            # Find active worklog for this equipment (if any)
+            active_worklog_id = None
+            worklog_notes = ""
+            for log in self.all_worklogs:
+                if log.get('equipment_id') == eq_id and log.get('current_status') == 'In Progress':
+                    active_worklog_id = log.get('id')
+                    worklog_notes = log.get('notes', '') or ''
+                    break
+
+            # Display text: equipment notes as primary; if worklog notes exist, append them
+            if worklog_notes and eq_notes:
+                display_text = f"{eq_notes}"
+                tooltip_text = f"Worklog notes: {worklog_notes}"
+            elif worklog_notes:
+                display_text = worklog_notes
+                tooltip_text = "(from active worklog)"
+            else:
+                display_text = eq_notes
+                tooltip_text = ""
+
+            notes_item = QTableWidgetItem(display_text)
+            notes_item.setToolTip(tooltip_text)
+            # Store worklog_id so _save_notes_spec can update the worklog too
+            notes_item.setData(Qt.ItemDataRole.UserRole, active_worklog_id)
+            if worklog_notes and not eq_notes:
+                # Worklog-only note — tint blue so user knows it's from a worklog
+                notes_item.setForeground(QColor(0, 0, 200))
             self.equipment_table.setItem(row, 6, notes_item)
 
             # SPECIFICATION (mapped to backend SUPPLIER)
             spec_item = QTableWidgetItem(equipment.get('supplier', '') or '')
             self.equipment_table.setItem(row, 7, spec_item)
-            
-            # WORKLOG NOTES - Show actual user notes from active worklog
-            worklog_notes = ""
-            for log in self.all_worklogs:
-                if log.get('equipment_id') == eq_id and log.get('current_status') == 'In Progress':
-                    worklog_notes = log.get('notes', '') or ''
-                    break
-            
-            worklog_notes_item = QTableWidgetItem(worklog_notes)
-            worklog_notes_item.setFlags(worklog_notes_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            worklog_notes_item.setForeground(QColor(0, 0, 200))
-            self.equipment_table.setItem(row, 8, worklog_notes_item)
 
         self.equipment_table.setSortingEnabled(True)
 
@@ -2051,15 +2095,19 @@ class MainWindow(QMainWindow):
         if not id_item or not notes_item or not spec_item:
             return
         equipment_id = int(id_item.text())
+        # Retrieve worklog_id stored in the Notes cell's UserRole data
+        worklog_id = notes_item.data(Qt.ItemDataRole.UserRole)
         # Buffer the pending save — timer fires 1s after last keystroke
-        self._pending_notes[equipment_id] = (notes_item.text(), spec_item.text())
+        self._pending_notes[equipment_id] = (notes_item.text(), spec_item.text(), worklog_id)
         self._notes_timer.start()
 
     def _flush_notes(self):
         """Actually send buffered notes saves to the API."""
         pending = dict(self._pending_notes)
         self._pending_notes.clear()
-        for equipment_id, (location, supplier) in pending.items():
+        for equipment_id, payload in pending.items():
+            location, supplier, worklog_id = payload
+            # Save equipment notes (location) + specification (supplier)
             worker = WriteWorker(
                 lambda eid=equipment_id, loc=location, sup=supplier:
                     self.api_client.update_equipment(eid, {"location": loc, "supplier": sup})
@@ -2068,6 +2116,27 @@ class MainWindow(QMainWindow):
             worker.error_occurred.connect(lambda e: self.statusBar().showMessage(f"Save failed: {e}", 3000))
             worker.start()
             self._keep_worker(worker)
+            # If there's an active worklog, mirror the notes there too
+            if worklog_id is not None:
+                wl_worker = WriteWorker(
+                    lambda wid=worklog_id, n=location:
+                        self.api_client.update_worklog(wid, {'notes': n})
+                )
+                def _on_wl_saved(ok, wid=worklog_id, n=location):
+                    if ok:
+                        # Update in-memory cache so Active Work Logs tab reflects immediately
+                        for log in self.all_worklogs:
+                            if log.get('id') == wid:
+                                log['notes'] = n
+                                break
+                        self.load_active_worklogs()
+                        self.statusBar().showMessage("Worklog notes saved ✓", 2000)
+                    else:
+                        self.statusBar().showMessage("Worklog save failed", 3000)
+                wl_worker.finished.connect(_on_wl_saved)
+                wl_worker.error_occurred.connect(lambda e: self.statusBar().showMessage(f"Worklog save failed: {e}", 3000))
+                wl_worker.start()
+                self._keep_worker(wl_worker)
     
     # REPLACE THIS METHOD IN YOUR MAIN FILE
 
@@ -2570,7 +2639,97 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(self, "Import Failed", f"Failed to import file:\n\n{err}")
 
         self._run_write(do_upload, on_success=on_done, status_msg="Uploading file…")
-    
+
+    def export_to_excel(self):
+        """Export currently filtered inventory table to Excel."""
+        table = self.equipment_table
+        row_count = table.rowCount()
+        if row_count == 0:
+            QMessageBox.warning(self, "No Data", "No records to export.")
+            return
+
+        parts = []
+        cat = self.category_filter.currentText().strip()
+        prod = self.product_filter.currentText().strip()
+        stat = self.status_filter.currentText().strip()
+        srch = self.asset_search.text().strip()
+        if cat and cat != "All":
+            parts.append(cat.replace(".xlsx", "").replace(".xls", "").replace(".csv", ""))
+        if prod and prod != "All":
+            parts.append(prod)
+        if stat and stat != "All":
+            parts.append(stat)
+        if srch:
+            parts.append(srch)
+        default_name = ("_".join(parts) if parts else "inventory") + "_export.xlsx"
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Export to Excel", default_name, "Excel Files (*.xlsx)"
+        )
+        if not file_path:
+            return
+
+        try:
+            import openpyxl
+            from openpyxl.styles import Font, PatternFill, Alignment
+            from openpyxl.utils import get_column_letter
+
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.title = "Inventory"
+
+            headers = []
+            for col in range(table.columnCount()):
+                headers.append(table.horizontalHeaderItem(col).text())
+            ws.append(headers)
+
+            header_fill = PatternFill("solid", fgColor="2C3E50")
+            header_font = Font(bold=True, color="FFFFFF")
+            for col_idx in range(1, len(headers) + 1):
+                cell = ws.cell(row=1, column=col_idx)
+                cell.fill = header_fill
+                cell.font = header_font
+                cell.alignment = Alignment(horizontal="center")
+
+            status_colors = {
+                "Available":  "C8F7C5",
+                "In Service": "FDEBD0",
+                "Faulty":     "FADBD8",
+                "Retired":    "D5D8DC",
+            }
+
+            for row in range(row_count):
+                row_data = []
+                status_val = ""
+                for col in range(table.columnCount()):
+                    item = table.item(row, col)
+                    val = item.text() if item else ""
+                    row_data.append(val)
+                    if col == 5:
+                        status_val = val
+                ws.append(row_data)
+
+                fill_color = status_colors.get(status_val)
+                if fill_color:
+                    fill = PatternFill("solid", fgColor=fill_color)
+                    for col_idx in range(1, table.columnCount() + 1):
+                        ws.cell(row=row + 2, column=col_idx).fill = fill
+
+            for col_idx in range(1, table.columnCount() + 1):
+                max_len = 0
+                for row_idx in range(1, ws.max_row + 1):
+                    val = ws.cell(row=row_idx, column=col_idx).value or ""
+                    max_len = max(max_len, len(str(val)))
+                ws.column_dimensions[get_column_letter(col_idx)].width = min(max_len + 4, 40)
+
+            wb.save(file_path)
+            QMessageBox.information(
+                self, "Export Complete",
+                f"Exported {row_count} record(s) to:\n{file_path}"
+            )
+        except Exception as e:
+            QMessageBox.critical(self, "Export Failed", f"Could not export file:\n{str(e)}")
+
     def show_category_details(self, index):
         """Show detailed equipment list for selected Excel sheet"""
         sheet_name = self.category_table.item(index.row(), 0).text()

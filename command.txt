@@ -7,4 +7,7 @@ render
 JWT_SECRET_KEY: d600e8cbb900af6471254c514bba14d522a0fe29104d5a1ca4c20c3ceb23447b
 Rendeer URL: https://inventory-system-iaub.onrender.com
 
-        
+old Debian way of running things on boot
+echo "service docker start" >> /etc/rc.local
+echo "docker start fugro-postgres" >> /etc/rc.local
+
