@@ -111,7 +111,7 @@ class WorkLog(Base):
     id = Column(Integer, primary_key=True, index=True)
     equipment_id = Column(Integer, ForeignKey("equipment.id"), nullable=False)
     job_name = Column(String(200))
-    assigned_to = Column(String(100))
+    location = Column(String(100))
     department = Column(String(100))
     designation = Column(String(100))
     check_out_date = Column(DateTime)
@@ -249,7 +249,7 @@ class SpecificationUpdate(BaseModel):
 class WorkLogCreate(BaseModel):
     equipment_id: int
     job_name: Optional[str] = ""
-    assigned_to: Optional[str] = None
+    location: Optional[str] = None
     department: Optional[str] = None
     designation: Optional[str] = None
     check_out_date: Optional[datetime] = None
@@ -259,7 +259,7 @@ class WorkLogCreate(BaseModel):
 
 class WorkLogUpdate(BaseModel):
     job_name: Optional[str] = None
-    assigned_to: Optional[str] = None
+    location: Optional[str] = None
     department: Optional[str] = None
     designation: Optional[str] = None
     expected_return_date: Optional[datetime] = None

@@ -48,6 +48,67 @@ API_BASE_URL, API_CONNECTION_TYPE = _detect_api_url()
 REQUEST_TIMEOUT = 30  # seconds — prevents UI from freezing on slow/sleeping Render instance
 
 
+class LocationHistory:
+    """Persists location autocomplete history to a local JSON file.
+
+    Entries are stored most-recently-used first.  A QCompleter using
+    MatchContains is returned by make_completer(), so typing 'mum' will
+    suggest 'Mumbai High', 'Mumbai Office', etc.
+    """
+
+    _FILE = Path.home() / ".it_asset_locations.json"
+    _MAX = 200  # maximum entries to keep
+
+    def __init__(self):
+        self._items: List[str] = []
+        self._load()
+
+    def _load(self):
+        try:
+            if self._FILE.exists():
+                data = json.loads(self._FILE.read_text(encoding="utf-8"))
+                self._items = data if isinstance(data, list) else []
+        except Exception as e:
+            print(f"[LocationHistory] Load error: {e}")
+            self._items = []
+
+    def _save(self):
+        try:
+            self._FILE.write_text(
+                json.dumps(self._items, indent=2), encoding="utf-8"
+            )
+        except Exception as e:
+            print(f"[LocationHistory] Save error: {e}")
+
+    def add(self, text: str):
+        """Add *text* to history (moves to front if already present)."""
+        text = text.strip()
+        if not text:
+            return
+        if text in self._items:
+            self._items.remove(text)
+        self._items.insert(0, text)
+        self._items = self._items[: self._MAX]
+        self._save()
+
+    def items(self) -> List[str]:
+        return list(self._items)
+
+    def make_completer(self, parent=None) -> "QCompleter":
+        """Return a ready-to-use QCompleter backed by the current history."""
+        model = QStringListModel(self._items, parent)
+        completer = QCompleter(parent)
+        completer.setModel(model)
+        completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        completer.setFilterMode(Qt.MatchFlag.MatchContains)
+        completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
+        return completer
+
+
+# Module-level singleton — shared across all dialogs in the session
+_location_history = LocationHistory()
+
+
 class DataFetcher(QThread):
     """
     Runs all read-only API calls in a background thread.
@@ -851,6 +912,7 @@ class EquipmentDialog(QDialog):
         layout.addRow("Status:", self.status)
         
         self.location = QLineEdit(self.equipment_data.get('location', '') if self.equipment_data else '')
+        self.location.setCompleter(_location_history.make_completer(self.location))
         layout.addRow("Location:", self.location)
         
         self.supplier = QLineEdit(self.equipment_data.get('supplier', '') if self.equipment_data else '')
@@ -878,6 +940,7 @@ class EquipmentDialog(QDialog):
             'location': self.location.text(),
             'supplier': self.supplier.text()
         }
+        _location_history.add(self.location.text())
         
         if self.cost.text():
             try:
@@ -970,9 +1033,10 @@ class WorkLogDialog(QDialog):
         self.job_name.setPlaceholderText("e.g., Software Development - Project X")
         layout.addRow("Job/Project Name:", self.job_name)
         
-        self.assigned_to = QLineEdit()
-        self.assigned_to.setPlaceholderText("e.g., John Doe")
-        layout.addRow("Assigned To:", self.assigned_to)
+        self.location = QLineEdit()
+        self.location.setPlaceholderText("e.g., John Doe")
+        self.location.setCompleter(_location_history.make_completer(self.location))
+        layout.addRow("Location:", self.location)
         
         self.department = QLineEdit()
         self.department.setPlaceholderText("e.g., Engineering")
@@ -1012,12 +1076,13 @@ class WorkLogDialog(QDialog):
         data = {
             'equipment_id': self.equipment_id,
             'job_name': self.job_name.text(),
-            'assigned_to': self.assigned_to.text(),
+            'location': self.location.text(),
             'department': self.department.text(),
             'check_out_date': self.check_out_date.date().toString(Qt.DateFormat.ISODate),
             'current_status': self.status.currentText(),
             'notes': self.notes.toPlainText()
         }
+        _location_history.add(self.location.text())
         
         # Only include expected return date if user explicitly set it
         return_date = self.expected_return.date()
@@ -1639,7 +1704,7 @@ class MainWindow(QMainWindow):
         self.past_worklog_table = QTableWidget()
         self.past_worklog_table.setColumnCount(11)
         self.past_worklog_table.setHorizontalHeaderLabels([
-            'ID', 'Asset No', 'Product', 'Status', 'Assigned To', 
+            'ID', 'Asset No', 'Product', 'Status', 'Location', 
             'Department', 'Designation', 'Check Out', 'Check In', 'Duration (days)', 'Notes'
         ])
         self.past_worklog_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
@@ -1759,7 +1824,7 @@ class MainWindow(QMainWindow):
         def on_selected(text):
             for eq in self.current_equipment:
                 if eq.get("asset_no") == text:
-                    assigned_to.setText(eq.get("location", ""))
+                    self.location.setText(eq.get("location", ""))
                     break
 
         completer.activated.connect(on_selected)
@@ -1779,7 +1844,8 @@ class MainWindow(QMainWindow):
         in_service_widget = QWidget()
         in_service_form = QFormLayout()
 
-        assigned_to = QLineEdit()
+        location = QLineEdit()
+        location.setCompleter(_location_history.make_completer(location))
         department = QLineEdit()
         designation = QLineEdit()
 
@@ -1794,7 +1860,7 @@ class MainWindow(QMainWindow):
         expected_return.setMinimumDate(QDate(2000, 1, 1))
         expected_return.clearButtonEnabled = True
 
-        in_service_form.addRow("Assigned To:", assigned_to)
+        in_service_form.addRow("Location:", location)
         in_service_form.addRow("Department:", department)
         in_service_form.addRow("Designation:", designation)
         in_service_form.addRow("Check Out Date:", checkout_date)
@@ -1864,10 +1930,12 @@ class MainWindow(QMainWindow):
             }
 
             if status == 'In Service':
-                worklog_data['assigned_to'] = assigned_to.text().strip()
+                loc_text = location.text().strip()
+                worklog_data['location'] = loc_text
                 worklog_data['department'] = department.text().strip()
                 worklog_data['designation'] = designation.text().strip()
                 worklog_data['check_out_date'] = checkout_date.date().toString('yyyy-MM-dd') + 'T00:00:00'
+                _location_history.add(loc_text)
                 
                 # Only include expected return date if user explicitly set it
                 return_date = expected_return.date()
@@ -2319,10 +2387,10 @@ class MainWindow(QMainWindow):
             status_item.setFlags(status_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.active_worklog_table.setItem(row, 3, status_item)
             
-            # Assigned To (read-only)
-            assigned_item = QTableWidgetItem(log.get('assigned_to', '') or '')
-            assigned_item.setFlags(assigned_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            self.active_worklog_table.setItem(row, 4, assigned_item)
+            # Location (read-only)
+            location_item = QTableWidgetItem(log.get('location', '') or '')
+            location_item.setFlags(location_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.active_worklog_table.setItem(row, 4, location_item)
             
             # Department (read-only)
             dept_item = QTableWidgetItem(log.get('department', '') or '')
@@ -2348,10 +2416,10 @@ class MainWindow(QMainWindow):
             reason_text = ""
             if equipment:
                 status = equipment.get('status', '')
-                assigned_to = log.get('assigned_to', '')
+                location = log.get('location', '')
                 
-                if status == 'In Service' and assigned_to:
-                    reason_text = f"In Service - Assigned to {assigned_to}"
+                if status == 'In Service' and location:
+                    reason_text = f"In Service - Location: {location}"
                 elif status == 'Faulty':
                     reason_text = "Device is Faulty"
                 elif status == 'Retired':
@@ -2401,7 +2469,7 @@ class MainWindow(QMainWindow):
             self.past_worklog_table.setItem(row, 1, QTableWidgetItem(equipment.get('asset_no', '') if equipment else ''))
             self.past_worklog_table.setItem(row, 2, QTableWidgetItem(equipment.get('product_name', '') if equipment else ''))
             self.past_worklog_table.setItem(row, 3, QTableWidgetItem(equipment.get('status', '') if equipment else ''))
-            self.past_worklog_table.setItem(row, 4, QTableWidgetItem(log.get('assigned_to', '') or ''))
+            self.past_worklog_table.setItem(row, 4, QTableWidgetItem(log.get('location', '') or ''))
             self.past_worklog_table.setItem(row, 5, QTableWidgetItem(log.get('department', '') or ''))
             self.past_worklog_table.setItem(row, 6, QTableWidgetItem(log.get('designation', '') or ''))
             self.past_worklog_table.setItem(row, 7, QTableWidgetItem(checkout[:10] if checkout else ''))
