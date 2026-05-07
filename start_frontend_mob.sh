@@ -1,4 +1,4 @@
 #!/bin/bash
-cd frontend
+cd frontend-mobile
 source venv/bin/activate
-python main_mobile.py
+python main_android.py

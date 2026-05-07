@@ -1824,7 +1824,7 @@ class MainWindow(QMainWindow):
         def on_selected(text):
             for eq in self.current_equipment:
                 if eq.get("asset_no") == text:
-                    self.location.setText(eq.get("location", ""))
+                    location.setText(eq.get("location", ""))
                     break
 
         completer.activated.connect(on_selected)
@@ -1925,7 +1925,7 @@ class MainWindow(QMainWindow):
                 'equipment_id': equipment['id'],
                 'job_name': f'{status} - {asset_no}',
                 'current_status': 'In Progress',
-                'check_out_date': QDate.currentDate().toString('yyyy-MM-dd') + 'T00:00:00',
+                'check_out_date': QDate.currentDate().toString('yyyy-MM-dd'),
                 'notes': ''  # Always start empty - user adds notes in the table
             }
 
@@ -1934,20 +1934,25 @@ class MainWindow(QMainWindow):
                 worklog_data['location'] = loc_text
                 worklog_data['department'] = department.text().strip()
                 worklog_data['designation'] = designation.text().strip()
-                worklog_data['check_out_date'] = checkout_date.date().toString('yyyy-MM-dd') + 'T00:00:00'
+                worklog_data['check_out_date'] = checkout_date.date().toString('yyyy-MM-dd')
                 _location_history.add(loc_text)
                 
                 # Only include expected return date if user explicitly set it
                 return_date = expected_return.date()
                 if return_date > QDate(2000, 1, 1):
-                    worklog_data['expected_return_date'] = return_date.toString('yyyy-MM-dd') + 'T00:00:00'
+                    worklog_data['expected_return_date'] = return_date.toString('yyyy-MM-dd')
             elif status in ['Faulty', 'Retired']:
                 # For Faulty/Retired, we can optionally store the reason in notes if provided
                 reason = reason_text.toPlainText().strip()
                 if reason:
                     worklog_data['notes'] = reason
 
-            if self.api_client.update_equipment(equipment['id'], {'status': status}):
+            # Build equipment update payload — persist location when going In Service
+            eq_update = {'status': status}
+            if status == 'In Service' and loc_text:
+                eq_update['location'] = loc_text
+
+            if self.api_client.update_equipment(equipment['id'], eq_update):
                 if self.api_client.create_worklog(worklog_data):
                     QMessageBox.information(dialog, "Success", f"Status changed to {status}")
                     dialog.accept()
@@ -1978,7 +1983,7 @@ class MainWindow(QMainWindow):
         from PyQt6.QtCore import QDate
         worklog_data = {
             'current_status': 'Completed',
-            'actual_return_date': QDate.currentDate().toString('yyyy-MM-dd') + 'T00:00:00'
+            'actual_return_date': QDate.currentDate().toString('yyyy-MM-dd')
         }
         eq_id = equipment['id']
 
@@ -2387,8 +2392,9 @@ class MainWindow(QMainWindow):
             status_item.setFlags(status_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.active_worklog_table.setItem(row, 3, status_item)
             
-            # Location (read-only)
-            location_item = QTableWidgetItem(log.get('location', '') or '')
+            # Location (read-only) — prefer worklog location, fall back to equipment location
+            location_val = log.get('location', '') or (equipment.get('location', '') if equipment else '') or ''
+            location_item = QTableWidgetItem(location_val)
             location_item.setFlags(location_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.active_worklog_table.setItem(row, 4, location_item)
             
@@ -2416,7 +2422,7 @@ class MainWindow(QMainWindow):
             reason_text = ""
             if equipment:
                 status = equipment.get('status', '')
-                location = log.get('location', '')
+                location = log.get('location', '') or equipment.get('location', '') or ''
                 
                 if status == 'In Service' and location:
                     reason_text = f"In Service - Location: {location}"
