@@ -1861,8 +1861,8 @@ class MainWindow(QMainWindow):
         expected_return.clearButtonEnabled = True
 
         in_service_form.addRow("Location:", location)
-        in_service_form.addRow("Department:", department)
-        in_service_form.addRow("Designation:", designation)
+        in_service_form.addRow("Department: (optional)", department)
+        in_service_form.addRow("Designation: (optional)", designation)
         in_service_form.addRow("Check Out Date:", checkout_date)
         in_service_form.addRow("Expected Return:", expected_return)
         in_service_widget.setLayout(in_service_form)
@@ -2361,90 +2361,122 @@ class MainWindow(QMainWindow):
             self.category_table.setRowHeight(row, 45)
         
     def load_active_worklogs(self):
-        """Load active work logs (In Progress status only) from cached data."""
-        # all_worklogs is populated by DataFetcher; no extra API call needed
-        active_logs = [log for log in self.all_worklogs if log.get('current_status') == 'In Progress']
-        
+        """Load active work logs — all non-Available devices, with worklog data if available."""
+        # Build a quick lookup: equipment_id -> most recent In Progress worklog
+        active_log_by_eq = {}
+        for log in self.all_worklogs:
+            if log.get('current_status') == 'In Progress':
+                eq_id = log.get('equipment_id')
+                # Keep the most recent (highest id) worklog per equipment
+                if eq_id not in active_log_by_eq or log.get('id', 0) > active_log_by_eq[eq_id].get('id', 0):
+                    active_log_by_eq[eq_id] = log
+
+        # All equipment that is NOT Available
+        unavailable_equipment = [
+            eq for eq in self.current_equipment
+            if eq.get('status', '').lower() != 'available'
+        ]
+
+        # Status color map for row highlighting
+        status_row_colors = {
+            'In Service': QColor(30, 80, 140),    # Dark blue
+            'Faulty':     QColor(140, 60, 30),    # Dark orange/red
+            'Retired':    QColor(80, 80, 80),      # Dark gray
+        }
+
         # Block signals while loading to prevent auto-save triggers
         self.active_worklog_table.blockSignals(True)
-        self.active_worklog_table.setRowCount(len(active_logs))
-        
-        for row, log in enumerate(active_logs):
-            equipment = next((e for e in self.current_equipment if e['id'] == log.get('equipment_id')), None)
-            
-            # ID (read-only)
-            id_item = QTableWidgetItem(str(log.get('id', '')))
-            id_item.setFlags(id_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        self.active_worklog_table.setRowCount(len(unavailable_equipment))
+
+        for row, equipment in enumerate(unavailable_equipment):
+            eq_id = equipment.get('id')
+            log = active_log_by_eq.get(eq_id)  # May be None if no worklog exists
+            eq_status = equipment.get('status', '')
+            row_color = status_row_colors.get(eq_status)
+
+            def make_item(text, editable=False, color=None):
+                item = QTableWidgetItem(str(text) if text else '')
+                if not editable:
+                    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                if color:
+                    item.setForeground(color)
+                return item
+
+            # ID — worklog ID if exists, else '-'
+            id_item = make_item(log.get('id', '') if log else '')
             self.active_worklog_table.setItem(row, 0, id_item)
-            
-            # Asset No (read-only)
-            asset_item = QTableWidgetItem(equipment.get('asset_no', '') if equipment else '')
-            asset_item.setFlags(asset_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            self.active_worklog_table.setItem(row, 1, asset_item)
-            
-            # Product (read-only)
-            product_item = QTableWidgetItem(equipment.get('product_name', '') if equipment else '')
-            product_item.setFlags(product_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            self.active_worklog_table.setItem(row, 2, product_item)
-            
-            # Status (read-only)
-            status_item = QTableWidgetItem(equipment.get('status', '') if equipment else '')
-            status_item.setFlags(status_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+
+            # Asset No
+            self.active_worklog_table.setItem(row, 1, make_item(equipment.get('asset_no', '')))
+
+            # Product
+            self.active_worklog_table.setItem(row, 2, make_item(equipment.get('product_name', '')))
+
+            # Status — coloured
+            status_item = make_item(eq_status)
+            if eq_status == 'In Service':
+                status_item.setForeground(QColor(100, 180, 255))
+            elif eq_status == 'Faulty':
+                status_item.setForeground(QColor(255, 140, 60))
+            elif eq_status == 'Retired':
+                status_item.setForeground(QColor(180, 180, 180))
             self.active_worklog_table.setItem(row, 3, status_item)
-            
-            # Location (read-only) — prefer worklog location, fall back to equipment location
-            location_val = log.get('location', '') or (equipment.get('location', '') if equipment else '') or ''
-            location_item = QTableWidgetItem(location_val)
-            location_item.setFlags(location_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            self.active_worklog_table.setItem(row, 4, location_item)
-            
-            # Department (read-only)
-            dept_item = QTableWidgetItem(log.get('department', '') or '')
-            dept_item.setFlags(dept_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            self.active_worklog_table.setItem(row, 5, dept_item)
-            
-            # Designation (read-only)
-            desig_item = QTableWidgetItem(log.get('designation', '') or '')
-            desig_item.setFlags(desig_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            self.active_worklog_table.setItem(row, 6, desig_item)
-            
-            # Check Out Date (read-only)
-            checkout_item = QTableWidgetItem(log.get('check_out_date', '')[:10] if log.get('check_out_date') else '')
-            checkout_item.setFlags(checkout_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            self.active_worklog_table.setItem(row, 7, checkout_item)
-            
-            # Expected Return (read-only)
-            return_item = QTableWidgetItem(log.get('expected_return_date', '')[:10] if log.get('expected_return_date') else '')
-            return_item.setFlags(return_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            self.active_worklog_table.setItem(row, 8, return_item)
-            
-            # Reason (read-only) - AUTO-GENERATED from status and assignment
-            reason_text = ""
-            if equipment:
-                status = equipment.get('status', '')
-                location = log.get('location', '') or equipment.get('location', '') or ''
-                
-                if status == 'In Service' and location:
-                    reason_text = f"In Service - Location: {location}"
-                elif status == 'Faulty':
-                    reason_text = "Device is Faulty"
-                elif status == 'Retired':
-                    reason_text = "Device is Retired"
-                else:
-                    reason_text = status
-            
-            reason_item = QTableWidgetItem(reason_text)
-            reason_item.setFlags(reason_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            reason_item.setForeground(QColor(100, 100, 100))  # Gray text
-            self.active_worklog_table.setItem(row, 9, reason_item)
-            
-            # Notes (EDITABLE) - Separate field, can be empty, user types here
-            # This uses the 'notes' field from database
-            notes_text = log.get('notes', '') or ''
+
+            # Location — prefer worklog, fall back to equipment
+            location_val = (log.get('location', '') if log else '') or equipment.get('location', '') or ''
+            self.active_worklog_table.setItem(row, 4, make_item(location_val))
+
+            # Department
+            dept_val = (log.get('department', '') if log else '') or ''
+            self.active_worklog_table.setItem(row, 5, make_item(dept_val))
+
+            # Designation
+            desig_val = (log.get('designation', '') if log else '') or ''
+            self.active_worklog_table.setItem(row, 6, make_item(desig_val))
+
+            # Check Out Date
+            checkout_val = ''
+            if log and log.get('check_out_date'):
+                checkout_val = log['check_out_date'][:10]
+            self.active_worklog_table.setItem(row, 7, make_item(checkout_val))
+
+            # Expected Return
+            return_val = ''
+            if log and log.get('expected_return_date'):
+                return_val = log['expected_return_date'][:10]
+            self.active_worklog_table.setItem(row, 8, make_item(return_val))
+
+            # Reason — auto-generated
+            if eq_status == 'In Service' and location_val:
+                reason_text = f"In Service - Location: {location_val}"
+            elif eq_status == 'Faulty':
+                reason_text = "Device is Faulty"
+            elif eq_status == 'Retired':
+                reason_text = "Device is Retired"
+            else:
+                reason_text = eq_status
+            self.active_worklog_table.setItem(row, 9, make_item(reason_text, color=QColor(150, 150, 150)))
+
+            # Notes (EDITABLE) — from worklog if exists
+            notes_text = (log.get('notes', '') if log else '') or ''
             notes_item = QTableWidgetItem(notes_text)
-            notes_item.setForeground(QColor(0, 100, 200))  # Blue text to indicate editable
+            if not log:
+                # No worklog — make notes read-only and hint in gray
+                notes_item.setFlags(notes_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                notes_item.setForeground(QColor(120, 120, 120))
+                notes_item.setToolTip("No active worklog — change device status to add notes")
+            else:
+                notes_item.setForeground(QColor(0, 100, 200))  # Blue = editable
+                notes_item.setData(Qt.ItemDataRole.UserRole, log.get('id'))
             self.active_worklog_table.setItem(row, 10, notes_item)
-        
+
+            # Subtle row tint based on status
+            if row_color:
+                for col in range(self.active_worklog_table.columnCount()):
+                    cell = self.active_worklog_table.item(row, col)
+                    if cell:
+                        cell.setBackground(row_color)
+
         # Re-enable signals after loading
         self.active_worklog_table.blockSignals(False)
     
